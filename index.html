@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NARA Analytics — Raffy</title>
+  <meta name="description" content="Private baby sleep and feed analytics dashboard. All analysis is local — no data leaves your device." />
+  <link rel="stylesheet" href="css/style.css" />
+  <!-- Chart.js + plugins + date adapter -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <!-- PapaParse -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════
+     UPLOAD SCREEN
+══════════════════════════════════════════════════════════ -->
+<div id="upload-screen" class="screen active">
+  <div class="upload-hero">
+    <div class="upload-logo">
+      <div class="logo-icon">🌙</div>
+      <h1>NARA Analytics</h1>
+      <p>Deep sleep &amp; feed analysis from your NARA baby tracker export</p>
+    </div>
+
+    <div class="drop-zone" id="drop-zone">
+      <span class="drop-icon">📄</span>
+      <h2>Drop your NARA CSV here</h2>
+      <p>or click to browse</p>
+      <input type="file" id="file-input" accept=".csv" />
+    </div>
+
+    <div class="upload-features">
+      <div class="feature-pill"><span class="fp-icon">🔒</span> 100% private — runs in your browser</div>
+      <div class="feature-pill"><span class="fp-icon">📈</span> Trend lines &amp; rolling averages</div>
+      <div class="feature-pill"><span class="fp-icon">🌙</span> Sleep &amp; feed deep analysis</div>
+      <div class="feature-pill"><span class="fp-icon">📊</span> Pro-rata today vs average</div>
+    </div>
+
+    <p class="upload-note">🔒 No data is uploaded to any server. Everything stays on this device.</p>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     APP SCREEN
+══════════════════════════════════════════════════════════ -->
+<div id="app-screen" class="screen">
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="app-logo">
+      <div class="logo-dot">🌙</div>
+      NARA Analytics
+    </div>
+    <span class="baby-name" id="baby-name-label">—</span>
+
+    <div class="header-controls">
+      <div class="control-group">
+        <span class="control-label">Rolling avg</span>
+        <div class="seg-btns" id="window-btns">
+          <button class="seg-btn" data-window="1d">1d</button>
+          <button class="seg-btn active" data-window="7d">7d</button>
+          <button class="seg-btn" data-window="14d">14d</button>
+          <button class="seg-btn" data-window="1mo">1mo</button>
+        </div>
+      </div>
+      <button class="btn-upload-new" id="btn-new-file">↑ New file</button>
+    </div>
+  </header>
+
+  <!-- Tab Nav -->
+  <nav class="tab-nav" id="tab-nav">
+    <button class="tab-btn active" data-tab="dashboard"><span class="tab-icon">🏠</span> Dashboard</button>
+    <button class="tab-btn" data-tab="sleep"><span class="tab-icon">😴</span> Sleep</button>
+    <button class="tab-btn" data-tab="feed"><span class="tab-icon">🍼</span> Feeds</button>
+    <button class="tab-btn" data-tab="combined"><span class="tab-icon">🔗</span> Combined</button>
+    <button class="tab-btn" data-tab="timeline"><span class="tab-icon">📅</span> Timeline</button>
+  </nav>
+
+  <!-- ── DASHBOARD TAB ─────────────────────────────────────── -->
+  <div id="tab-dashboard" class="tab-content active">
+
+    <div class="section-spacer">
+      <div class="section-header">
+        <span class="section-title">Right Now</span>
+        <span class="text-muted" style="font-size:0.72rem" id="last-updated-label"></span>
+      </div>
+      <div class="pulse-grid" id="pulse-grid"></div>
+    </div>
+
+    <div class="section-spacer">
+      <div class="section-header">
+        <span class="section-title">⚠️ Alerts</span>
+      </div>
+      <div class="alert-strip" id="alert-strip"></div>
+    </div>
+
+    <div class="section-spacer">
+      <div class="section-header">
+        <span class="section-title">Today vs Rolling Average</span>
+        <span class="text-muted" style="font-size:0.72rem" id="prorata-label"></span>
+      </div>
+      <div class="compare-grid" id="compare-grid"></div>
+    </div>
+
+    <div class="section-spacer">
+      <div class="activity-strip-wrap">
+        <div class="activity-strip-title">🕐 Last 24h Activity</div>
+        <canvas id="activity-canvas"></canvas>
+      </div>
+    </div>
+
+    <div class="section-spacer">
+      <div class="section-header"><span class="section-title">Weekly Summary</span></div>
+      <div id="weekly-summary" style="display:flex;gap:12px;flex-wrap:wrap;"></div>
+    </div>
+
+  </div>
+
+  <!-- ── SLEEP TAB ─────────────────────────────────────────── -->
+  <div id="tab-sleep" class="tab-content">
+
+    <div class="stats-grid" id="sleep-stat-cards"></div>
+
+    <div class="chart-grid chart-grid-1">
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title"><span class="ct-dot" style="background:var(--sleep)"></span>Daily Total Sleep</div>
+            <div class="chart-sub">Day (light) + Night 7pm–7am (dark) · trend line · rolling average</div>
+          </div>
+          <div class="chart-legend">
+            <div class="legend-item"><div class="legend-dot" style="background:var(--sleep)"></div>Day sleep</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--sleep-dark)"></div>Night sleep</div>
+            <div class="legend-item"><div class="legend-line" style="background:var(--trend)"></div>Trend</div>
+            <div class="legend-item"><div class="legend-dash" style="border-color:var(--avg-line)"></div>Rolling avg</div>
+          </div>
+        </div>
+        <div class="chart-wrap" style="min-height:280px"><canvas id="chart-sleep-daily"></canvas></div>
+        <p class="chart-insight" id="insight-sleep-daily"></p>
+      </div>
+    </div>
+
+    <div class="chart-grid chart-grid-2">
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title"><span class="ct-dot" style="background:var(--sleep)"></span>Longest Sleep Block / Day</div>
+            <div class="chart-sub">Is overnight consolidation improving?</div>
+          </div>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-sleep-longest"></canvas></div>
+        <p class="chart-insight" id="insight-sleep-longest"></p>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title"><span class="ct-dot" style="background:var(--amber)"></span>Wake Windows</div>
+            <div class="chart-sub">Time awake between sleeps (green &lt;90m, amber 90–120m, red &gt;120m)</div>
+          </div>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-wake-windows"></canvas></div>
+        <p class="chart-insight" id="insight-wake-windows"></p>
+      </div>
+    </div>
+
+    <div class="chart-grid chart-grid-2">
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title"><span class="ct-dot" style="background:var(--sleep)"></span>Sleep Sessions (Scatter)</div>
+            <div class="chart-sub">Every sleep · night sessions darker · trend line</div>
+          </div>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-sleep-scatter"></canvas></div>
+        <p class="chart-insight" id="insight-sleep-scatter"></p>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title"><span class="ct-dot" style="background:var(--purple)"></span>Night vs Day Sleep %</div>
+            <div class="chart-sub">Is more sleep shifting to night?</div>
+          </div>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-sleep-nightpct"></canvas></div>
+        <p class="chart-insight" id="insight-sleep-nightpct"></p>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── FEED TAB ──────────────────────────────────────────── -->
+  <div id="tab-feed" class="tab-content">
+
+    <div class="stats-grid" id="feed-stat-cards"></div>
+
+    <div class="chart-grid chart-grid-1">
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title"><span class="ct-dot" style="background:var(--feed)"></span>Daily Feed Count &amp; Total Duration</div>
+            <div class="chart-sub">Bars = count · line = total minutes · trend lines · rolling average</div>
+          </div>
+          <div class="chart-legend">
+            <div class="legend-item"><div class="legend-dot" style="background:var(--feed)"></div>Feed count</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--feed-right)"></div>Total duration (min)</div>
+            <div class="legend-item"><div class="legend-line" style="background:var(--trend)"></div>Trend</div>
+            <div class="legend-item"><div class="legend-dash" style="border-color:var(--avg-line)"></div>Rolling avg</div>
+          </div>
+        </div>
+        <div class="chart-wrap" style="min-height:280px"><canvas id="chart-feed-daily"></canvas></div>
+        <p class="chart-insight" id="insight-feed-daily"></p>
+      </div>
+    </div>
+
+    <!-- Feed Intake chart -->
+    <div class="chart-grid chart-grid-1">
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title"><span class="ct-dot" style="background:var(--feed)"></span>Daily Feed Intake — Breast Time &amp; Bottle Volume</div>
+            <div class="chart-sub">Bars = total breastfeed time (min, left axis) · Line = formula/bottle volume (mL, right axis) · ★ = today pro-rated</div>
+          </div>
+          <div class="chart-legend">
+            <div class="legend-item"><div class="legend-dot" style="background:var(--feed)"></div>Breast time (min)</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--purple)"></div>Bottle (mL)</div>
+            <div class="legend-item"><div class="legend-dot" style="background:rgba(255,183,77,0.3)"></div>Today (projected)</div>
+          </div>
+        </div>
+        <div class="chart-wrap" style="min-height:260px"><canvas id="chart-feed-intake"></canvas></div>
+        <p class="chart-insight" id="insight-feed-intake"></p>
+      </div>
+    </div>
+
+    <div class="chart-grid chart-grid-2">
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title"><span class="ct-dot" style="background:var(--feed)"></span>Feed Intervals</div>
+            <div class="chart-sub">Time between feeds · green &lt;3h, amber 3–4h, red &gt;4h</div>
+          </div>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-feed-intervals"></canvas></div>
+        <p class="chart-insight" id="insight-feed-intervals"></p>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title"><span class="ct-dot" style="background:var(--feed)"></span>Session Duration (scatter)</div>
+            <div class="chart-sub">Each feed · night feeds lighter · trend line</div>
+          </div>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-feed-duration"></canvas></div>
+        <p class="chart-insight" id="insight-feed-duration"></p>
+      </div>
+    </div>
+
+    <div class="chart-grid chart-grid-2">
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title"><span class="ct-dot" style="background:var(--feed-left)"></span>Left / Right Balance</div>
+            <div class="chart-sub">Daily % of total feed time on each side</div>
+          </div>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-feed-balance"></canvas></div>
+        <p class="chart-insight" id="insight-feed-balance"></p>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title"><span class="ct-dot" style="background:var(--feed)"></span>Feed Heatmap (hour of day)</div>
+            <div class="chart-sub">When does baby feed most? Colour = count</div>
+          </div>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-feed-heatmap"></canvas></div>
+        <p class="chart-insight" id="insight-feed-heatmap"></p>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── COMBINED TAB ──────────────────────────────────────── -->
+  <div id="tab-combined" class="tab-content">
+
+    <div class="chart-grid chart-grid-1">
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title"><span class="ct-dot" style="background:var(--trend)"></span>Daily Sleep vs Feed Count</div>
+            <div class="chart-sub">Dual-axis: bars = sleep hours (left) · line = feed count (right) · both with trend lines</div>
+          </div>
+          <div class="chart-legend">
+            <div class="legend-item"><div class="legend-dot" style="background:var(--sleep)"></div>Sleep (hrs)</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--feed)"></div>Feed count</div>
+          </div>
+        </div>
+        <div class="chart-wrap" style="min-height:280px"><canvas id="chart-combined-dual"></canvas></div>
+        <p class="chart-insight" id="insight-combined-dual"></p>
+      </div>
+    </div>
+
+    <div class="chart-grid chart-grid-2">
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title"><span class="ct-dot" style="background:var(--trend)"></span>Pre-Sleep Feed → Sleep Quality</div>
+            <div class="chart-sub">Feed duration before sleep vs subsequent sleep length · regression line</div>
+          </div>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-presleep"></canvas></div>
+        <p class="chart-insight" id="insight-presleep"></p>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title"><span class="ct-dot" style="background:var(--feed)"></span>Feed Count vs Longest Sleep Block</div>
+            <div class="chart-sub">Daily feed count vs longest sleep that day · regression line</div>
+          </div>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-feed-vs-sleep"></canvas></div>
+        <p class="chart-insight" id="insight-feed-vs-sleep"></p>
+      </div>
+    </div>
+
+    <div class="chart-grid chart-grid-1">
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title"><span class="ct-dot" style="background:var(--trend)"></span>Sleep + Feeds — Shared Timeline (last 7 days)</div>
+            <div class="chart-sub">Blue bars = sleep blocks · amber markers = feed events · hover for details</div>
+          </div>
+        </div>
+        <div class="chart-wrap" style="min-height:320px"><canvas id="chart-overlap"></canvas></div>
+        <p class="chart-insight" id="insight-overlap"></p>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── TIMELINE TAB ──────────────────────────────────────── -->
+  <div id="tab-timeline" class="tab-content">
+    <div class="section-header" style="margin-bottom:16px">
+      <span class="section-title">📅 Full History — Day-by-Day Gantt</span>
+      <div class="chart-legend">
+        <div class="legend-item"><div class="legend-dot" style="background:var(--sleep);width:14px;height:10px;border-radius:3px"></div>Sleep</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--feed);width:6px;height:14px;border-radius:2px"></div>Feed</div>
+      </div>
+    </div>
+    <div id="timeline-canvas-wrap">
+      <canvas id="timeline-canvas"></canvas>
+    </div>
+    <div id="timeline-tooltip" class="timeline-tooltip hidden"></div>
+  </div>
+
+</div><!-- /#app-screen -->
+
+<!-- Scripts (order matters — no modules, global namespace) -->
+<script src="js/parser.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/views/dashboard.js"></script>
+<script src="js/views/sleep.js"></script>
+<script src="js/views/feed.js"></script>
+<script src="js/views/combined.js"></script>
+<script src="js/views/timeline.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
