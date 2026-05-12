@@ -11,13 +11,14 @@ const TimelineView = (() => {
   const GRID_COLOR   = 'rgba(255,255,255,0.05)';
   const ROW_H = 36, LABEL_W = 58, HDR_H = 30;
 
-  function render(data) {
+  function render(data, windowKey) {
     _canvas  = document.getElementById('timeline-canvas');
     _tooltip = document.getElementById('timeline-tooltip');
     if (!_canvas) return;
 
-    const { sleeps, feeds, dailyStats, ongoingSleep } = data;
-    const days  = [...dailyStats].sort((a,b)=>a.sleepDay<b.sleepDay?-1:1);
+    const { sleeps, feeds, dailyStats } = data;
+    const slicedDs = Engine.sliceData(dailyStats, windowKey);
+    const days  = [...slicedDs].sort((a,b)=>a.sleepDay<b.sleepDay?-1:1);
     const totalH= HDR_H + days.length * ROW_H + 10;
     const totalW= (_canvas.parentElement.clientWidth - 40) || 700;
     _canvas.width  = Math.max(totalW, 600);
@@ -29,7 +30,11 @@ const TimelineView = (() => {
 
     const contentW = W - LABEL_W;
     const xForMin  = m => LABEL_W + (m/1440)*contentW;
-    const now      = new Date();
+    const now      = Engine.getNow();
+
+    // Night Mode Shading (19:00 to 07:00, which is the first 12 hours)
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillRect(xForMin(0), HDR_H, xForMin(720) - xForMin(0), totalH - HDR_H);
 
     // Header hour labels
     ctx.font='9px Inter,sans-serif'; ctx.fillStyle=TEXT_COLOR;
@@ -59,28 +64,23 @@ const TimelineView = (() => {
       // Completed sleep blocks
       const allSleepsForDay = sleeps.filter(s=>s.sleepDay===dayStats.sleepDay);
       allSleepsForDay.forEach(s=>{
-        const endT    = s.isOngoing ? now : s.endTime;
+        const endT    = s.endTime;
         const offStart= (s.startTime.getTime()-dayStart.getTime())/60000;
         const offEnd  = (endT.getTime()-dayStart.getTime())/60000;
         const x1=xForMin(Math.max(0,offStart)), x2=xForMin(Math.min(1440,offEnd));
         const bw=Math.max(x2-x1,2), bh=ROW_H-10, by=y+5;
 
-        ctx.fillStyle = s.isOngoing?SLEEP_ONGOING:SLEEP_COLOR;
+        ctx.fillStyle = SLEEP_COLOR;
         roundRect(ctx,x1,by,bw,bh,4);
         ctx.strokeStyle=SLEEP_BORDER; ctx.lineWidth=1;
-        if (s.isOngoing) ctx.setLineDash([4,4]);
         ctx.strokeRect(x1,by,bw,bh);
         ctx.setLineDash([]);
 
-        if (bw>40&&!s.isOngoing) {
+        if (bw>40) {
           ctx.fillStyle='rgba(255,255,255,0.75)'; ctx.font='8px Inter,sans-serif';
           ctx.fillText(Engine.fmtHr(s.sleepDuration/3600), x1+4, by+bh-4);
         }
-        if (s.isOngoing&&bw>30) {
-          ctx.fillStyle='rgba(79,195,247,0.6)'; ctx.font='8px Inter,sans-serif';
-          ctx.fillText('ongoing…', x1+4, by+bh-4);
-        }
-        _hitData.push({type:'sleep',event:{...s,isOngoing:s.isOngoing},x1,x2,y1:by,y2:by+bh});
+        _hitData.push({type:'sleep',event:{...s,isOngoing:false},x1,x2,y1:by,y2:by+bh});
       });
 
       // Feed events
@@ -120,9 +120,7 @@ const TimelineView = (() => {
     let html='';
     if (hit.type==='sleep') {
       const s=hit.event;
-      html=s.isOngoing
-        ?`😴 <strong>Ongoing sleep</strong><br>Started: ${Engine.fmtTime(s.startTime)}<br><em>Still sleeping…</em>`
-        :`😴 <strong>${Engine.fmtHr(s.sleepDuration/3600)}</strong><br>${Engine.fmtTime(s.startTime)} → ${Engine.fmtTime(s.endTime)}<br><span style="color:#5A7090">${s.caregiver||''}</span>`;
+      html=`😴 <strong>${Engine.fmtHr(s.sleepDuration/3600)}</strong><br>${Engine.fmtTime(s.startTime)} → ${Engine.fmtTime(s.endTime)}<br><span style="color:#5A7090">${s.caregiver||''}</span>`;
     } else {
       const f=hit.event;
       html=f.feedSubtype==='bottle'

@@ -641,3 +641,82 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .chart-insight .up    { color: var(--green); }
 .chart-insight .down  { color: var(--red); }
 .chart-insight .warn  { color: var(--amber); }
+
+/* ─── DOCTOR'S REPORT MODAL ──────────────────────────────────── */
+#dr-report-modal {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0,0,0,0.8);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+  visibility: hidden; opacity: 0;
+  transition: all 0.2s;
+}
+#dr-report-modal.active { visibility: visible; opacity: 1; }
+.dr-report-content {
+  background: var(--bg0);
+  width: 100%; max-width: 800px; max-height: 90vh;
+  border-radius: var(--radius-m);
+  border: 1px solid var(--border);
+  display: flex; flex-direction: column;
+}
+.dr-report-header {
+  padding: 20px 24px; border-bottom: 1px solid var(--border);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.dr-report-header h2 { font-size: 1.2rem; color: var(--text0); }
+.dr-report-actions { display: flex; gap: 12px; }
+.btn-print {
+  background: var(--sleep); color: var(--bg0); font-weight: 600;
+  padding: 8px 16px; border-radius: 6px;
+}
+.btn-close { color: var(--text2); font-size: 1.2rem; }
+.dr-report-body {
+  padding: 24px; overflow-y: auto; color: var(--text0);
+}
+.dr-section { margin-bottom: 24px; }
+.dr-section h3 { font-size: 1rem; color: var(--text1); border-bottom: 1px solid var(--border2); padding-bottom: 8px; margin-bottom: 12px; }
+.dr-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+.dr-stat { background: var(--bg2); padding: 16px; border-radius: 8px; border: 1px solid var(--border2); }
+.dr-stat-label { font-size: 0.75rem; color: var(--text2); text-transform: uppercase; margin-bottom: 6px; }
+.dr-stat-val { font-size: 1.4rem; font-weight: 700; color: var(--text0); }
+
+/* ─── PRINT CSS ──────────────────────────────────────────────── */
+@media print {
+  /* Force dark mode colors to print correctly */
+  html, body {
+    background: #070d1a !important;
+    color: #E8EDF5 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  
+  /* Hide UI elements */
+  #upload-screen, .app-header, .tab-nav, .btn-upload-new, .header-controls, .timeline-tooltip, #dr-report-modal .dr-report-header {
+    display: none !important;
+  }
+  
+  /* If the report modal is active, hide the main app screen entirely */
+  body.printing-report #app-screen { display: none !important; }
+  body.printing-report #dr-report-modal { 
+    position: static; visibility: visible; opacity: 1; background: transparent; padding: 0;
+  }
+  body.printing-report .dr-report-content { border: none; max-width: none; max-height: none; overflow: visible; }
+  
+  /* If printing the dashboard (not report), expand all tabs */
+  body:not(.printing-report) .tab-content {
+    display: block !important;
+    page-break-before: always;
+  }
+  body:not(.printing-report) #tab-dashboard { page-break-before: avoid; }
+  
+  /* Charts and backgrounds */
+  .chart-card, .stat-card, .pulse-card, .compare-card, .activity-strip-wrap, #timeline-canvas-wrap {
+    background: #111e34 !important;
+    border: 1px solid rgba(255, 255, 255, 0.13) !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  
+  /* General formatting */
+  .chart-wrap { min-height: 200px !important; }
+}

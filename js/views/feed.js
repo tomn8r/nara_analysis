@@ -40,7 +40,7 @@ const FeedView = (() => {
     renderIntervals(feeds, dailyStats, windowKey);
     renderDuration(breastFeeds, dailyStats, windowKey);
     renderBalance(dailyStats, windowKey);
-    renderHeatmap(feeds);
+    renderHeatmap(feeds, windowKey);
   }
 
   // ── stat cards ───────────────────────────────────────────
@@ -71,12 +71,17 @@ const FeedView = (() => {
 
   // ── chart 1: daily feed count + duration ───────────────────
   function renderDailyCount(ds, wk) {
-    const labels  = fmtDate(ds);
-    const { completeVals:completeCounts, todayActual:actualCounts } = Engine.dailyChartData(ds,'feedCount');
-    const { completeVals:completeDurs,   todayActual:actualDurs   } = Engine.dailyChartData(ds,'totalFeedMin');
-    const ra_c    = Engine.rollingAvg(ds,'feedCount',wk);
-    const ra_d    = Engine.rollingAvg(ds,'totalFeedMin',wk);
-    const trendC  = Engine.linearRegressionLine(completeCounts.map(v=>v??0));
+    const sl = a => Engine.sliceData(a, wk);
+    const labels = sl(fmtDate(ds));
+    const fullC = Engine.dailyChartData(ds,'feedCount');
+    const fullD = Engine.dailyChartData(ds,'totalFeedMin');
+    
+    const completeCounts = sl(fullC.completeVals), actualCounts = sl(fullC.todayActual);
+    const completeDurs   = sl(fullD.completeVals), actualDurs   = sl(fullD.todayActual);
+    
+    const ra_c = sl(Engine.rollingAvg(ds,'feedCount',wk));
+    const ra_d = sl(Engine.rollingAvg(ds,'totalFeedMin',wk));
+    const trendC = Engine.linearRegressionLine(completeCounts.map(v=>v??0));
 
     mk('chart-feed-daily',{
       type:'bar',
@@ -114,7 +119,8 @@ const FeedView = (() => {
       },
     });
 
-    const complete = ds.slice(0,-1).filter(d=>d.feedCount>0);
+    const slicedDs = Engine.sliceData(ds, wk);
+    const complete = slicedDs.slice(0,-1).filter(d=>d.feedCount>0);
     if (!complete.length) return;
     const avgCount = Engine.avg(complete.map(d=>d.feedCount));
     const avgDur   = Engine.avg(complete.map(d=>d.totalFeedMin));
@@ -130,11 +136,16 @@ const FeedView = (() => {
 
   // ── chart 2: INTAKE — breast time + bottle mL ────────────
   function renderIntake(ds, wk) {
-    const labels = fmtDate(ds);
-    const { completeVals:breastComplete, todayActual:breastActual } = Engine.dailyChartData(ds,'totalFeedMin');
-    const { completeVals:bottleComplete, todayActual:bottleActual } = Engine.dailyChartData(ds,'totalBottleML');
-    const ra_breast  = Engine.rollingAvg(ds,'totalFeedMin',wk);
-    const ra_bottle  = Engine.rollingAvg(ds,'totalBottleML',wk);
+    const sl = a => Engine.sliceData(a, wk);
+    const labels = sl(fmtDate(ds));
+    const fullBreast = Engine.dailyChartData(ds,'totalFeedMin');
+    const fullBottle = Engine.dailyChartData(ds,'totalBottleML');
+    
+    const breastComplete = sl(fullBreast.completeVals), breastActual = sl(fullBreast.todayActual);
+    const bottleComplete = sl(fullBottle.completeVals), bottleActual = sl(fullBottle.todayActual);
+    
+    const ra_breast = sl(Engine.rollingAvg(ds,'totalFeedMin',wk));
+    const ra_bottle = sl(Engine.rollingAvg(ds,'totalBottleML',wk));
 
     mk('chart-feed-intake',{
       type:'bar',
@@ -174,9 +185,10 @@ const FeedView = (() => {
       },
     });
 
-    const complete = ds.slice(0,-1);
-    const avgBreast = Engine.rollingAvgScalar(ds,'totalFeedMin',wk);
-    const avgBottle = Engine.rollingAvgScalar(ds,'totalBottleML',wk);
+    const slicedDs = Engine.sliceData(ds, wk);
+    const complete = slicedDs.slice(0,-1);
+    const avgBreast = Engine.rollingAvgScalar(slicedDs,'totalFeedMin',wk);
+    const avgBottle = Engine.rollingAvgScalar(slicedDs,'totalBottleML',wk);
     const bottleDays = complete.filter(d=>d.totalBottleML>0).length;
     const hasBottle  = bottleDays > 0;
     insight('insight-feed-intake',
@@ -190,7 +202,9 @@ const FeedView = (() => {
 
   // ── chart 3: feed intervals scatter ─────────────────────
   function renderIntervals(feeds, ds, wk) {
-    const intervals = Engine.allFeedIntervals(feeds);
+    const minTime = Engine.getNow().getTime() - (Engine.WINDOW_DAYS[wk]||99999)*24*3600000;
+    const rFeeds = feeds.filter(f => f.startTime.getTime() >= minTime);
+    const intervals = Engine.allFeedIntervals(rFeeds);
     if (!intervals.length) { insight('insight-feed-intervals','<span class="warn">Not enough feed data for intervals.</span>'); return; }
     const colorFn = v=>v<180?'rgba(105,240,174,0.7)':v<240?'rgba(255,213,79,0.7)':'rgba(239,83,80,0.7)';
     const pts  = intervals.map(i=>({x:i.time,y:+i.intervalMin.toFixed(1)}));
@@ -231,8 +245,9 @@ const FeedView = (() => {
 
   // ── chart 4: session duration scatter ────────────────────
   function renderDuration(breastFeeds, ds, wk) {
+    const minTime = Engine.getNow().getTime() - (Engine.WINDOW_DAYS[wk]||99999)*24*3600000;
     const isNight = f=>{const h=f.startTime.getHours();return h>=19||h<7;};
-    const pts  = breastFeeds.filter(f=>f.totalDuration>0).map(f=>({x:f.startTime,y:+(f.totalDuration/60).toFixed(1),night:isNight(f)}));
+    const pts  = breastFeeds.filter(f=>f.totalDuration>0 && f.startTime.getTime() >= minTime).map(f=>({x:f.startTime,y:+(f.totalDuration/60).toFixed(1),night:isNight(f)}));
     const tr   = pts.length>=2?Engine.linearRegressionLine(pts.map(p=>p.y)):[];
 
     mk('chart-feed-duration',{
@@ -266,9 +281,10 @@ const FeedView = (() => {
 
   // ── chart 5: L/R balance ────────────────────────────────
   function renderBalance(ds, wk) {
-    const labels   = fmtDate(ds);
-    const leftPct  = ds.map(d=>+(d.leftPct||50).toFixed(1));
-    const rightPct = ds.map(d=>+(d.rightPct||50).toFixed(1));
+    const sl = a => Engine.sliceData(a, wk);
+    const labels   = sl(fmtDate(ds));
+    const leftPct  = sl(ds.map(d=>+(d.leftPct||50).toFixed(1)));
+    const rightPct = sl(ds.map(d=>+(d.rightPct||50).toFixed(1)));
     mk('chart-feed-balance',{
       type:'line',
       data:{labels,datasets:[
@@ -282,7 +298,8 @@ const FeedView = (() => {
         scales:{...baseOpts().scales,y:{min:0,max:100,grid:{color:C.grid},ticks:{color:C.text,callback:v=>v+'%'}}},
       },
     });
-    const complete = ds.slice(0,-1).filter(d=>d.totalFeedSec>0);
+    const slicedDs = Engine.sliceData(ds, wk);
+    const complete = slicedDs.slice(0,-1).filter(d=>d.totalFeedSec>0);
     if (!complete.length) return;
     const avgL = Engine.avg(complete.map(d=>d.leftPct));
     const avgR = Engine.avg(complete.map(d=>d.rightPct));
@@ -295,7 +312,9 @@ const FeedView = (() => {
   }
 
   // ── chart 6: heatmap ─────────────────────────────────────
-  function renderHeatmap(feeds) {
+  function renderHeatmap(feeds, wk) {
+    const minTime = Engine.getNow().getTime() - (Engine.WINDOW_DAYS[wk]||99999)*24*3600000;
+    feeds = feeds.filter(f => f.startTime.getTime() >= minTime);
     const days = [...new Set(feeds.map(f=>f.sleepDay))].sort();
     const matrix = {};
     feeds.forEach(f=>{const k=`${f.sleepDay}_${f.startTime.getHours()}`;matrix[k]=(matrix[k]||0)+1;});

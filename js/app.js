@@ -20,8 +20,10 @@ const App = (() => {
   function init() {
     setupUpload();
     setupWindowButtons();
+    setupBoundaryButtons();
     setupTabs();
     setupNewFileBtn();
+    setupDrReport();
     tryLoadFromStorage();
   }
 
@@ -72,10 +74,11 @@ const App = (() => {
 
     const babyName = events[0]?.profileName || 'Baby';
     let headerText = babyName;
-    const lastDayStats = _data.dailyStats[_data.dailyStats.length - 1];
-    if (lastDayStats && lastDayStats.ageWeeks != null) {
-      const w = lastDayStats.ageWeeks;
-      headerText += ` (Week ${w})`;
+    const birthDate = events[0]?.profileBirthDate || null;
+    const now = Engine.getNow();
+    if (birthDate) {
+      const ageStr = Engine.getBabyAgeString(now, birthDate);
+      if (ageStr) headerText += ` (${ageStr})`;
     }
     document.getElementById('baby-name-label').textContent = headerText;
     showApp();
@@ -97,9 +100,28 @@ const App = (() => {
     document.getElementById('window-btns').addEventListener('click', e=>{
       const btn = e.target.closest('.seg-btn'); if (!btn) return;
       _windowKey = btn.dataset.window;
-      document.querySelectorAll('.seg-btn').forEach(b=>b.classList.remove('active'));
+      document.getElementById('window-btns').querySelectorAll('.seg-btn').forEach(b=>b.classList.remove('active'));
       btn.classList.add('active');
       if (_data) renderActiveTab();
+    });
+  }
+
+  // ─── BOUNDARY SELECTOR ────────────────────────────────────
+  function setupBoundaryButtons() {
+    const container = document.getElementById('boundary-btns');
+    if (!container) return;
+    container.addEventListener('click', e=>{
+      const btn = e.target.closest('.seg-btn'); if (!btn) return;
+      const hour = parseInt(btn.dataset.boundary);
+      
+      Parser.setBoundaryHour(hour);
+      Engine.setBoundaryHour(hour);
+      
+      container.querySelectorAll('.seg-btn').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      
+      // Reprocess from local storage string
+      tryLoadFromStorage();
     });
   }
 
@@ -139,6 +161,92 @@ const App = (() => {
       try { localStorage.removeItem('nara_csv'); } catch(_) {}
       _data = null;
       showUpload();
+    });
+  }
+
+  // ─── DOCTOR'S REPORT ──────────────────────────────────────
+  function setupDrReport() {
+    const btnDr = document.getElementById('btn-dr-report');
+    const modal = document.getElementById('dr-report-modal');
+    const btnClose = document.getElementById('btn-close-dr');
+    const btnPrint = document.getElementById('btn-print-dr');
+    const body = document.getElementById('dr-report-body');
+
+    if (!btnDr || !modal) return;
+
+    btnDr.addEventListener('click', () => {
+      if (!_data) return;
+      const sliced = Engine.sliceData(_data.dailyStats, _windowKey);
+      const completeDays = sliced.slice(0, -1);
+      
+      const numDays = completeDays.length;
+      if (numDays === 0) {
+        alert("Not enough complete days of data to generate a report.");
+        return;
+      }
+
+      // Age calculation
+      const birthDate = _data.feeds.length && _data.feeds[0].profileBirthDate ? _data.feeds[0].profileBirthDate : null;
+      const ageStr = birthDate ? Engine.getBabyAgeString(Engine.getNow(), birthDate) : 'Unknown';
+
+      // Averages
+      const avgFeedCount = Engine.avg(completeDays.map(d=>d.feedCount));
+      const avgBreastMin = Engine.avg(completeDays.map(d=>d.totalFeedMin));
+      const avgBottleVol = Engine.avg(completeDays.map(d=>d.totalBottleML));
+      
+      const avgTotalSleep = Engine.avg(completeDays.map(d=>d.totalSleepHr));
+      const avgNightSleep = Engine.avg(completeDays.map(d=>d.nightSleepHr));
+      const avgNightWakings = Engine.avg(completeDays.map(d=>d.nightWakings));
+      const avgLongestBlock = Engine.avg(completeDays.map(d=>d.longestBlockHr));
+
+      const avgWet = Engine.avg(completeDays.map(d=>d.wetCount));
+      const avgDirty = Engine.avg(completeDays.map(d=>d.dirtyCount));
+
+      body.innerHTML = `
+        <div class="dr-section">
+          <h3>Patient Profile</h3>
+          <p><strong>Name:</strong> ${document.getElementById('baby-name-label').textContent.split(' (')[0]}</p>
+          <p><strong>Age:</strong> ${ageStr}</p>
+          <p><strong>Time Window Analyzed:</strong> Last ${numDays} complete days</p>
+          <p><strong>Day Boundary Config:</strong> ${document.querySelector('#boundary-btns .active').textContent}</p>
+        </div>
+        
+        <div class="dr-section">
+          <h3>Output (Averages per Day)</h3>
+          <div class="dr-grid">
+            <div class="dr-stat"><div class="dr-stat-label">Wet Diapers</div><div class="dr-stat-val">${avgWet.toFixed(1)} / day</div></div>
+            <div class="dr-stat"><div class="dr-stat-label">Dirty Diapers</div><div class="dr-stat-val">${avgDirty.toFixed(1)} / day</div></div>
+          </div>
+        </div>
+
+        <div class="dr-section">
+          <h3>Feeding (Averages per Day)</h3>
+          <div class="dr-grid">
+            <div class="dr-stat"><div class="dr-stat-label">Total Feeds</div><div class="dr-stat-val">${avgFeedCount.toFixed(1)} / day</div></div>
+            <div class="dr-stat"><div class="dr-stat-label">Breastfeed Duration</div><div class="dr-stat-val">${Engine.fmtMin(avgBreastMin)}</div></div>
+            <div class="dr-stat"><div class="dr-stat-label">Bottle Volume</div><div class="dr-stat-val">${Math.round(avgBottleVol)} mL</div></div>
+          </div>
+        </div>
+
+        <div class="dr-section">
+          <h3>Sleep (Averages per Day)</h3>
+          <div class="dr-grid">
+            <div class="dr-stat"><div class="dr-stat-label">Total Daily Sleep</div><div class="dr-stat-val">${Engine.fmtHr(avgTotalSleep)}</div></div>
+            <div class="dr-stat"><div class="dr-stat-label">Night Sleep</div><div class="dr-stat-val">${Engine.fmtHr(avgNightSleep)}</div></div>
+            <div class="dr-stat"><div class="dr-stat-label">Longest Block</div><div class="dr-stat-val">${Engine.fmtHr(avgLongestBlock)}</div></div>
+            <div class="dr-stat"><div class="dr-stat-label">Night Wakings</div><div class="dr-stat-val">${avgNightWakings.toFixed(1)}</div></div>
+          </div>
+        </div>
+      `;
+      modal.classList.add('active');
+    });
+
+    btnClose.addEventListener('click', () => modal.classList.remove('active'));
+    
+    btnPrint.addEventListener('click', () => {
+      document.body.classList.add('printing-report');
+      window.print();
+      document.body.classList.remove('printing-report');
     });
   }
 

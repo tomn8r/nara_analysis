@@ -59,14 +59,24 @@
 
     <div class="header-controls">
       <div class="control-group">
+        <span class="control-label">Day Boundary</span>
+        <div class="seg-btns" id="boundary-btns">
+          <button class="seg-btn active" data-boundary="19">7pm</button>
+          <button class="seg-btn" data-boundary="0">Midnight</button>
+        </div>
+      </div>
+      <div class="control-group">
         <span class="control-label">Rolling avg</span>
         <div class="seg-btns" id="window-btns">
           <button class="seg-btn" data-window="1d">1d</button>
           <button class="seg-btn active" data-window="7d">7d</button>
           <button class="seg-btn" data-window="14d">14d</button>
           <button class="seg-btn" data-window="1mo">1mo</button>
+          <button class="seg-btn" data-window="1yr">1yr</button>
+          <button class="seg-btn" data-window="all">All</button>
         </div>
       </div>
+      <button class="btn-upload-new" id="btn-dr-report" style="margin-right: 8px; background: rgba(79, 195, 247, 0.1); border-color: var(--sleep); color: var(--sleep);">👨‍⚕️ Doctor's Report</button>
       <button class="btn-upload-new" id="btn-new-file">↑ New file</button>
     </div>
   </header>
@@ -187,6 +197,29 @@
         </div>
         <div class="chart-wrap"><canvas id="chart-sleep-nightpct"></canvas></div>
         <p class="chart-insight" id="insight-sleep-nightpct"></p>
+      </div>
+    </div>
+
+    <div class="chart-grid chart-grid-2">
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title"><span class="ct-dot" style="background:var(--red)"></span>Night Wakings</div>
+            <div class="chart-sub">Number of times awake between 7pm and 7am</div>
+          </div>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-sleep-wakings"></canvas></div>
+        <p class="chart-insight" id="insight-sleep-wakings"></p>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title"><span class="ct-dot" style="background:var(--amber)"></span>Day Nap Count</div>
+            <div class="chart-sub">Number of naps starting between 7am and 7pm</div>
+          </div>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-sleep-naps"></canvas></div>
+        <p class="chart-insight" id="insight-sleep-naps"></p>
       </div>
     </div>
 
@@ -357,6 +390,22 @@
   </div>
 
 </div><!-- /#app-screen -->
+
+<!-- ── DOCTOR'S REPORT MODAL ──────────────────────────────── -->
+<div id="dr-report-modal">
+  <div class="dr-report-content">
+    <div class="dr-report-header">
+      <h2>👨‍⚕️ Pediatrician Summary Report</h2>
+      <div class="dr-report-actions">
+        <button class="btn-print" id="btn-print-dr">🖨️ Print PDF</button>
+        <button class="btn-close" id="btn-close-dr">✕</button>
+      </div>
+    </div>
+    <div class="dr-report-body" id="dr-report-body">
+      <!-- Report populated via JS -->
+    </div>
+  </div>
+</div>
 
 <!-- Scripts (order matters — no modules, global namespace) -->
 <script src="js/parser.js"></script>

@@ -9,31 +9,34 @@ const DashboardView = (() => {
 
   // ── pulse cards ───────────────────────────────────────────
   function renderPulse() {
-    const { feeds, completeSleeps, ongoingSleep } = _data;
-    const now = Date.now();
+    const { feeds, completeSleeps } = _data;
+    const now = Engine.getNow().getTime();
     const lastFeed  = [...feeds].sort((a,b)=>b.startTime-a.startTime)[0];
     const lastSleep = [...completeSleeps].sort((a,b)=>b.startTime-a.startTime)[0];
-    const nowSleeping = !!ongoingSleep;
     const msSinceFeed  = lastFeed  ? now-lastFeed.startTime.getTime()  : null;
     const msSinceWake  = lastSleep&&lastSleep.endTime ? now-lastSleep.endTime.getTime() : null;
     const feedGapH     = msSinceFeed?msSinceFeed/3600000:0;
     const feedStatus   = feedGapH<3?'green':feedGapH<4?'amber':'red';
     const wakeMin      = msSinceWake?msSinceWake/60000:0;
-    const wakeStatus   = nowSleeping?'green':wakeMin<90?'green':wakeMin<120?'amber':'red';
+    const wakeStatus   = wakeMin<90?'green':wakeMin<120?'amber':'red';
 
     const today = Engine.todaySleepDay();
     const ts    = _data.dailyStats.find(d=>d.sleepDay===today);
 
+    const avgFeedGapM = Engine.rollingAvgScalar(_data.dailyStats,'avgFeedIntervalMin',_window);
+    const predictedFeed = (lastFeed && avgFeedGapM) ? new Date(lastFeed.startTime.getTime() + avgFeedGapM*60000) : null;
+    
+    const avgWakeM = Engine.rollingAvgScalar(_data.dailyStats,'avgWakeWindowMin',_window);
+    const predictedSleep = (lastSleep && lastSleep.endTime && avgWakeM) ? new Date(lastSleep.endTime.getTime() + avgWakeM*60000) : null;
+
     const cards=[
       { icon:'🍼', title:'Since Last Feed',
         value:msSinceFeed?Engine.fmtDuration(msSinceFeed):'No data',
-        sub:lastFeed?`at ${Engine.fmtTime(lastFeed.startTime)} · ${lastFeed.feedSubtype==='bottle'?lastFeed.totalVolume+'mL':Engine.fmtMin(lastFeed.totalDuration/60)}`:'',
+        sub:lastFeed?`Last: ${Engine.fmtTime(lastFeed.startTime)} · Predict next: <strong>${predictedFeed?Engine.fmtTime(predictedFeed):'?'}</strong>`:'',
         status:feedStatus },
-      { icon:'😴', title:nowSleeping?'Currently Sleeping':'Awake For',
-        value:nowSleeping?Engine.fmtDuration(now-ongoingSleep.startTime.getTime())
-             :msSinceWake?Engine.fmtDuration(msSinceWake):'No data',
-        sub:lastSleep?`Last sleep: ${Engine.fmtMin(lastSleep.sleepDuration/60)}`
-           :nowSleeping?`Started ${Engine.fmtTime(ongoingSleep.startTime)}`:'',
+      { icon:'😴', title:'Awake For',
+        value:msSinceWake?Engine.fmtDuration(msSinceWake):'No data',
+        sub:lastSleep?`Woke: ${Engine.fmtTime(lastSleep.endTime)} · Predict next: <strong>${predictedSleep?Engine.fmtTime(predictedSleep):'?'}</strong>`:'',
         status:wakeStatus },
       { icon:'🌙', title:'Night Feeds',
         value:ts?`${ts.nightFeedCount}`:'0',
@@ -58,8 +61,8 @@ const DashboardView = (() => {
 
   // ── alerts ────────────────────────────────────────────────
   function renderAlerts() {
-    const { feeds, completeSleeps, ongoingSleep, dailyStats } = _data;
-    const now = Date.now(); const alerts = [];
+    const { feeds, completeSleeps, dailyStats } = _data;
+    const now = Engine.getNow().getTime(); const alerts = [];
     const lastFeed  = [...feeds].sort((a,b)=>b.startTime-a.startTime)[0];
     const lastSleep = [...completeSleeps].sort((a,b)=>b.startTime-a.startTime)[0];
 
@@ -68,7 +71,7 @@ const DashboardView = (() => {
       if (h>4) alerts.push({type:'crit',icon:'🍼',msg:`${Engine.fmtHr(h)} since last feed — consider waking to feed`});
       else if (h>3) alerts.push({type:'warn',icon:'🍼',msg:`${Engine.fmtHr(h)} since last feed — may be due soon`});
     }
-    if (!ongoingSleep&&lastSleep&&lastSleep.endTime) {
+    if (lastSleep&&lastSleep.endTime) {
       const wakeMin=(now-lastSleep.endTime.getTime())/60000;
       if (wakeMin>120) alerts.push({type:'warn',icon:'😴',msg:`Awake ${Engine.fmtMin(wakeMin)} — approaching overtired territory (>2h)`});
     }
@@ -97,8 +100,9 @@ const DashboardView = (() => {
       {key:'feedCount',         label:'🍼 Feed Count',      fmt:v=>v!=null?Math.round(v)+'':'—', color:'feed'},
       {key:'totalFeedMin',      label:'⏱ Breast Time',      fmt:v=>v!=null?Engine.fmtMin(v):'—', color:'feed'},
       {key:'totalSleepHr',      label:'😴 Total Sleep',     fmt:v=>v!=null?Engine.fmtHr(v):'—',  color:'sleep'},
-      {key:'longestBlockHr',    label:'💤 Longest Block',   fmt:v=>v!=null?Engine.fmtHr(v):'—',  color:'sleep'},
       {key:'nightSleepHr',      label:'🌙 Night Sleep',     fmt:v=>v!=null?Engine.fmtHr(v):'—',  color:'sleep'},
+      {key:'nightWakings',      label:'⚠️ Night Wakings',   fmt:v=>v!=null?v.toFixed(1):'—',  color:'amber'},
+      {key:'longestBlockHr',    label:'💤 Longest Block',   fmt:v=>v!=null?Engine.fmtHr(v):'—',  color:'sleep'},
       {key:'avgFeedIntervalMin',label:'🔄 Avg Feed Gap',    fmt:v=>v!=null?Engine.fmtMin(v):'—', color:'feed'},
     ];
     document.getElementById('compare-grid').innerHTML=metrics.map(m=>{
@@ -130,7 +134,7 @@ const DashboardView = (() => {
   function renderActivity() {
     const canvas=document.getElementById('activity-canvas');
     const ctx=canvas.getContext('2d');
-    const now=Date.now(), start=now-24*3600000;
+    const now=Engine.getNow().getTime(), start=now-24*3600000;
     const W=canvas.parentElement.offsetWidth-36||700, H=72;
     canvas.width=W; canvas.height=H;
     const toPx=ts=>((ts-start)/(24*3600000))*W;
@@ -146,15 +150,14 @@ const DashboardView = (() => {
         ctx.fillText(t.toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit',hour12:true}),x+2,H-4);
       }
     }
-    // Sleep blocks (complete + ongoing)
+    // Sleep blocks
     const allSleeps = [...(_data.completeSleeps||[])];
-    if (_data.ongoingSleep) allSleeps.push({..._data.ongoingSleep, endTime:new Date()});
     allSleeps.forEach(s=>{
       const ss=Math.max(s.startTime.getTime(),start);
       const se=Math.min((s.endTime||new Date()).getTime(),now);
       if (se<start||ss>now) return;
       const x1=toPx(ss), x2=toPx(se);
-      ctx.fillStyle=s.isOngoing?'rgba(79,195,247,0.25)':'rgba(79,195,247,0.45)';
+      ctx.fillStyle='rgba(79,195,247,0.45)';
       ctx.beginPath(); ctx.roundRect(x1,10,Math.max(x2-x1,2),H-26,3); ctx.fill();
     });
     // Feed marks
@@ -172,7 +175,8 @@ const DashboardView = (() => {
 
   // ── weekly summary ────────────────────────────────────────
   function renderWeekly() {
-    const complete=_data.dailyStats.filter(d=>d.sleepDay!==Engine.todaySleepDay());
+    let complete=_data.dailyStats.filter(d=>d.sleepDay!==Engine.todaySleepDay());
+    complete = Engine.sliceData(complete, _window);
     const weeks=[]; for(let i=0;i<complete.length;i+=7) weeks.push(complete.slice(i,i+7));
     document.getElementById('weekly-summary').innerHTML=weeks.map((wk,wi)=>{
       const aS=Engine.avg(wk.map(d=>d.totalSleepHr));

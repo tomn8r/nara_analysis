@@ -21,9 +21,9 @@ const CombinedView = (() => {
 
   function render(data, windowKey) {
     renderDual(data, windowKey);
-    renderPreSleep(data);
-    renderFeedVsSleep(data);
-    renderOverlap(data);
+    renderPreSleep({feeds: [...data.feeds], completeSleeps: [...data.completeSleeps]}, windowKey);
+    renderFeedVsSleep(data, windowKey);
+    renderOverlap(data, windowKey);
   }
 
   function fmtDate(ds) {
@@ -37,12 +37,17 @@ const CombinedView = (() => {
   // ── chart 1: dual-axis sleep vs feed count ───────────────
   function renderDual(data, wk) {
     const { dailyStats:ds } = data;
-    const labels = fmtDate(ds);
-    // Use actual partial values for today
-    const { completeVals:sleepComplete, todayActual:sleepActual } = Engine.dailyChartData(ds,'totalSleepHr');
-    const { completeVals:feedComplete,  todayActual:feedActual  } = Engine.dailyChartData(ds,'feedCount');
-    const ra_sleep = Engine.rollingAvg(ds,'totalSleepHr',wk);
-    const ra_feed  = Engine.rollingAvg(ds,'feedCount',wk);
+    const sl = a => Engine.sliceData(a, wk);
+    const labels = sl(fmtDate(ds));
+    
+    const fullSleep = Engine.dailyChartData(ds,'totalSleepHr');
+    const fullFeed  = Engine.dailyChartData(ds,'feedCount');
+    
+    const sleepComplete = sl(fullSleep.completeVals), sleepActual = sl(fullSleep.todayActual);
+    const feedComplete  = sl(fullFeed.completeVals),  feedActual  = sl(fullFeed.todayActual);
+    
+    const ra_sleep = sl(Engine.rollingAvg(ds,'totalSleepHr',wk));
+    const ra_feed  = sl(Engine.rollingAvg(ds,'feedCount',wk));
     const trendSleep = Engine.linearRegressionLine(sleepComplete.map(v=>v??0));
     const trendFeed  = Engine.linearRegressionLine(feedComplete.map(v=>v??0));
 
@@ -86,7 +91,8 @@ const CombinedView = (() => {
     });
 
     // Correlation insight
-    const complete = ds.slice(0,-1).filter(d=>d.feedCount>0&&d.totalSleepHr>0);
+    const slicedDs = Engine.sliceData(ds, wk);
+    const complete = slicedDs.slice(0,-1).filter(d=>d.feedCount>0&&d.totalSleepHr>0);
     if (complete.length>=3) {
       const reg = Engine.scatterRegression(complete.map(d=>({x:d.feedCount,y:d.totalSleepHr})));
       if (reg) {
@@ -106,7 +112,10 @@ const CombinedView = (() => {
   }
 
   // ── chart 2: pre-sleep feed → sleep quality ──────────────
-  function renderPreSleep(data) {
+  function renderPreSleep(data, wk) {
+    const minTime = Engine.getNow().getTime() - (Engine.WINDOW_DAYS[wk]||99999)*24*3600000;
+    data.completeSleeps = data.completeSleeps.filter(s => s.startTime.getTime() >= minTime);
+    data.feeds = data.feeds.filter(f => f.startTime.getTime() >= minTime);
     const { completeSleeps:sleeps, feeds } = data;
     const significant = sleeps.filter(s=>s.endTime&&s.sleepDuration>1800);
     const points = [];
@@ -165,9 +174,10 @@ const CombinedView = (() => {
   }
 
   // ── chart 3: daily feed count vs longest sleep ───────────
-  function renderFeedVsSleep(data) {
+  function renderFeedVsSleep(data, wk) {
     const { dailyStats:ds } = data;
-    const pts = ds.filter(d=>d.feedCount>0&&d.longestBlockHr>0)
+    const slicedDs = Engine.sliceData(ds, wk);
+    const pts = slicedDs.filter(d=>d.feedCount>0&&d.longestBlockHr>0)
                   .map(d=>({x:d.feedCount,y:+d.longestBlockHr.toFixed(2)}));
     const reg = pts.length>=3?Engine.scatterRegression(pts):null;
     let trendData=[];
@@ -213,10 +223,11 @@ const CombinedView = (() => {
   }
 
   // ── chart 4: sleep + feed overlap (last 7 days) ──────────
-  function renderOverlap(data) {
+  function renderOverlap(data, wk) {
     const { completeSleeps:sleeps, feeds } = data;
-    const now = new Date();
-    const winStart = new Date(now.getTime()-7*24*3600000);
+    const now = Engine.getNow();
+    const days = Engine.WINDOW_DAYS[wk]||99999;
+    const winStart = new Date(now.getTime() - days*24*3600000);
     const rSleeps  = sleeps.filter(s=>s.endTime&&s.startTime>=winStart);
     const rFeeds   = feeds.filter(f=>f.startTime>=winStart);
 
@@ -250,9 +261,9 @@ const CombinedView = (() => {
 
     // Insight
     const avgSleepBlock = rSleeps.length?Engine.avg(rSleeps.map(s=>s.sleepDuration/3600)):null;
-    const feedsPerDay   = rFeeds.length/7;
+    const feedsPerDay   = rFeeds.length/Math.min(days, Math.max(1, (now.getTime() - rFeeds[0]?.startTime?.getTime())/86400000||1));
     insight('insight-overlap',
-      `In the last 7 days: <strong>${rSleeps.length} sleep sessions</strong> averaging <strong>${avgSleepBlock?Engine.fmtHr(avgSleepBlock):'—'}</strong> each, ` +
+      `In the selected period: <strong>${rSleeps.length} sleep sessions</strong> averaging <strong>${avgSleepBlock?Engine.fmtHr(avgSleepBlock):'—'}</strong> each, ` +
       `and <strong>${rFeeds.length} feeds</strong> (<strong>${feedsPerDay.toFixed(1)}/day</strong>). ` +
       `Look for clusters of feeds (amber triangles) that immediately precede longer blue sleep bars — these are the patterns that link daytime feeding to overnight rest.`
     );

@@ -1,6 +1,23 @@
 /* engine.js — All analysis computation (v2) */
 const Engine = (() => {
-  const WINDOW_DAYS = { '1d':1, '7d':7, '14d':14, '1mo':30 };
+  const WINDOW_DAYS = { '1d':1, '7d':7, '14d':14, '1mo':30, '1yr':365, 'all':99999 };
+  let currentAppTime = null;
+  let _boundaryHour = 19;
+
+  function setBoundaryHour(hour) {
+    _boundaryHour = hour;
+  }
+
+  function getNow() {
+    return currentAppTime || new Date();
+  }
+
+  function sliceData(array, windowKey) {
+    const days = WINDOW_DAYS[windowKey] || 99999;
+    if (days === 99999) return array;
+    // Return the selected number of days PLUS today (the partial day at the end)
+    return array.slice(-(days + 1));
+  }
 
   // ─── ENTRY POINT ─────────────────────────────────────────────
   function analyse(events) {
@@ -9,10 +26,40 @@ const Engine = (() => {
     // Completed sleeps only for statistics; keep ongoing for dashboard
     const sleeps        = events.filter(e => e.type === 'Sleep');
     const completeSleeps = sleeps.filter(s => s.endTime);
-    const ongoingSleep   = sleeps.filter(s => s.isOngoing).sort((a,b)=>b.startTime-a.startTime)[0] || null;
+    const ongoingSleep   = null; // Ignored as requested
     const growth = events.filter(e => e.type === 'Growth');
+    const diapers = events.filter(e => e.type === 'Diaper');
     const allDays    = getAllSleepDays(events);
-    const dailyStats = allDays.map(day => buildDayStats(day, feeds, completeSleeps));
+    
+    // Find absolute latest timestamp to anchor "Now"
+    let maxTs = 0;
+    feeds.forEach(f => {
+      const ms = f.startTime.getTime() + (f.totalDuration?f.totalDuration*1000:0);
+      if (ms > maxTs) maxTs = ms;
+    });
+    completeSleeps.forEach(s => {
+      if (s.endTime && s.endTime.getTime() > maxTs) maxTs = s.endTime.getTime();
+    });
+    currentAppTime = maxTs > 0 ? new Date(maxTs) : new Date();
+
+    // Global Wake Windows & Feed Intervals
+    const sortedCompleteSleeps = [...completeSleeps].sort((a,b)=>a.startTime - b.startTime);
+    sortedCompleteSleeps.forEach((s, i) => {
+      if (i > 0) {
+        const gap = (s.startTime - sortedCompleteSleeps[i-1].endTime) / 60000;
+        if (gap > 0 && gap < 480) s.wakeWindowBefore = gap;
+      }
+    });
+
+    const sortedAllFeeds = [...feeds].sort((a,b)=>a.startTime - b.startTime);
+    sortedAllFeeds.forEach((f, i) => {
+      if (i > 0) {
+        const gap = (f.startTime - sortedAllFeeds[i-1].startTime) / 60000;
+        if (gap > 0 && gap < 480) f.intervalBefore = gap;
+      }
+    });
+
+    const dailyStats = allDays.map(day => buildDayStats(day, feeds, completeSleeps, diapers));
 
     // Compute sleep regressions (recent 3 days < 80% of prev 14 days)
     for (let i = 0; i < dailyStats.length; i++) {
@@ -37,7 +84,7 @@ const Engine = (() => {
   }
 
   // ─── PER-DAY STATS ────────────────────────────────────────────
-  function buildDayStats(sleepDay, feeds, completeSleeps) {
+  function buildDayStats(sleepDay, feeds, completeSleeps, diapers) {
     const { start: dayStart, end: dayEnd } = getDayBoundary(sleepDay);
 
     const dayFeeds  = feeds.filter(f => f.startTime >= dayStart && f.startTime < dayEnd);
@@ -54,12 +101,8 @@ const Engine = (() => {
 
     // Feed intervals and cluster feeding
     const sortedFeeds   = [...dayFeeds].sort((a,b) => a.startTime - b.startTime);
-    const feedIntervals = [];
+    const feedIntervals = sortedFeeds.map(f => f.intervalBefore).filter(i => i != null);
     let hasClusterFeeds = false;
-    for (let i = 1; i < sortedFeeds.length; i++) {
-      const gap = (sortedFeeds[i].startTime - sortedFeeds[i-1].startTime) / 60000;
-      if (gap > 0) feedIntervals.push(gap);
-    }
     for (let i = 0; i < sortedFeeds.length - 2; i++) {
       if ((sortedFeeds[i+2].startTime - sortedFeeds[i].startTime) <= 2 * 3600000) {
         hasClusterFeeds = true;
@@ -69,10 +112,12 @@ const Engine = (() => {
 
     // Sleep stats (clip to this 24h window)
     let totalSleepSec = 0, nightSleepSec = 0, longestBlock = 0;
-    const nightEnd = new Date(dayStart.getTime() + 12 * 3600000); // 7pm + 12h = 7am
 
-    // Night feeds
-    const nightFeeds = dayFeeds.filter(f => f.startTime < nightEnd);
+    // Night feeds (always 19:00 to 07:00, regardless of boundary)
+    const nightFeeds = dayFeeds.filter(f => {
+      const h = f.startTime.getHours();
+      return h >= 19 || h < 7;
+    });
     const nightFeedCount = nightFeeds.length;
 
     daySleeps.forEach(s => {
@@ -81,23 +126,28 @@ const Engine = (() => {
       const dur = Math.max(0, se - ss) / 1000;
       totalSleepSec += dur;
       if (s.sleepDuration > longestBlock) longestBlock = s.sleepDuration;
-      const ns = Math.max(ss, dayStart.getTime());
-      const ne = Math.min(se, nightEnd.getTime());
-      if (ne > ns) nightSleepSec += (ne - ns) / 1000;
+      
+      // Calculate intersection with 19:00-07:00
+      nightSleepSec += getOverlapWithNight(ss, se);
     });
 
-    // Wake windows
+    // Wake windows and Sleep counts
     const sortedSleeps = [...daySleeps].sort((a,b) => a.startTime - b.startTime);
-    const wakeWindows  = [];
-    for (let i = 1; i < sortedSleeps.length; i++) {
-      const gap = (sortedSleeps[i].startTime - sortedSleeps[i-1].endTime) / 60000;
-      if (gap > 0 && gap < 480) wakeWindows.push(gap);
-    }
+    const wakeWindows  = sortedSleeps.map(s => s.wakeWindowBefore).filter(w => w != null);
+    
+    const nightSleepCount = daySleeps.filter(s => s.startTime.getHours() >= 19 || s.startTime.getHours() < 7).length;
+    const nightWakings = Math.max(0, nightSleepCount - 1);
+    const daySleepCount = daySleeps.filter(s => s.startTime.getHours() >= 7 && s.startTime.getHours() < 19).length;
 
     // Bottle feed volume
     const totalBottleML = dayFeeds
       .filter(f => f.feedSubtype === 'bottle')
       .reduce((s, f) => s + (f.totalVolume || 0), 0);
+
+    // Diapers
+    const dayDiapers = diapers.filter(d => d.startTime >= dayStart && d.startTime < dayEnd);
+    const wetCount = dayDiapers.filter(d => d.diaperType === 'Wet' || d.diaperType === 'Mixed').length;
+    const dirtyCount = dayDiapers.filter(d => d.diaperType === 'Dirty' || d.diaperType === 'Mixed').length;
 
     // Age context
     let ageDays = null, ageWeeks = null;
@@ -131,47 +181,84 @@ const Engine = (() => {
       wakeWindows,
       avgWakeWindowMin: wakeWindows.length ? avg(wakeWindows) : null,
       maxWakeWindowMin: wakeWindows.length ? Math.max(...wakeWindows) : null,
-      dayFeeds, daySleeps,
+      nightWakings,
+      daySleepCount,
+      wetCount,
+      dirtyCount,
+      dayFeeds, daySleeps, dayDiapers,
     };
   }
 
-  // ─── DAY BOUNDARY (7pm → 7pm) ────────────────────────────────
+  // ─── NIGHT OVERLAP (19:00 - 07:00) ───────────────────────────
+  function getOverlapWithNight(startMs, endMs) {
+    let overlapMs = 0;
+    const startDt = new Date(startMs);
+    let currentDay = new Date(startDt.getFullYear(), startDt.getMonth(), startDt.getDate());
+    
+    while (currentDay.getTime() < endMs) {
+       const dY = currentDay.getFullYear(), dM = currentDay.getMonth(), dD = currentDay.getDate();
+       const mornStart = new Date(dY, dM, dD, 0, 0, 0).getTime();
+       const mornEnd   = new Date(dY, dM, dD, 7, 0, 0).getTime();
+       const eveStart  = new Date(dY, dM, dD, 19, 0, 0).getTime();
+       const eveEnd    = new Date(dY, dM, dD + 1, 0, 0, 0).getTime();
+
+       const oMornStart = Math.max(startMs, mornStart), oMornEnd = Math.min(endMs, mornEnd);
+       if (oMornEnd > oMornStart) overlapMs += (oMornEnd - oMornStart);
+
+       const oEveStart = Math.max(startMs, eveStart), oEveEnd = Math.min(endMs, eveEnd);
+       if (oEveEnd > oEveStart) overlapMs += (oEveEnd - oEveStart);
+       
+       currentDay.setDate(currentDay.getDate() + 1);
+    }
+    return overlapMs / 1000;
+  }
+
+  // ─── DAY BOUNDARY ────────────────────────────────────────────
   function getDayBoundary(sleepDay) {
     const [y, mo, d] = sleepDay.split('-').map(Number);
-    const start = new Date(y, mo - 1, d, 19, 0, 0);
+    const start = new Date(y, mo - 1, d, _boundaryHour, 0, 0);
     const end   = new Date(start.getTime() + 24 * 3600000);
     return { start, end };
   }
 
   // ─── ROLLING AVERAGE ─────────────────────────────────────────
-  // Returns array aligned to dailyStats; each entry = avg of prev N complete days
+  // Returns array aligned to dailyStats
   function rollingAvg(dailyStats, metric, windowKey) {
     const n = WINDOW_DAYS[windowKey] || 7;
-    const complete = dailyStats.slice(0, -1); // exclude today (partial)
-    return dailyStats.map((_, i) => {
-      const startIdx = Math.max(0, Math.min(i, complete.length) - n);
-      const slice    = complete.slice(startIdx, Math.min(i, complete.length));
-      const vals     = slice.map(s => s[metric]).filter(v => v != null && !isNaN(v));
+    const today = todaySleepDay();
+    
+    return dailyStats.map((d, i) => {
+      let slice;
+      if (d.sleepDay === today) {
+        // For today, compare against the n completed days BEFORE today
+        slice = dailyStats.slice(0, i).slice(-n);
+      } else {
+        // For a past complete day, the trailing average includes that day
+        slice = dailyStats.slice(0, i + 1).slice(-n);
+      }
+      const vals = slice.map(s => s[metric]).filter(v => v != null && !isNaN(v));
       return vals.length ? +avg(vals).toFixed(3) : null;
     });
   }
 
   // Scalar: avg over last N complete days before today
   function rollingAvgScalar(dailyStats, metric, windowKey) {
-    const n       = WINDOW_DAYS[windowKey] || 7;
-    const complete = dailyStats.slice(0, -1);
-    const slice    = complete.slice(-n);
-    const vals     = slice.map(s => s[metric]).filter(v => v != null && !isNaN(v));
+    const n = WINDOW_DAYS[windowKey] || 7;
+    const today = todaySleepDay();
+    const isTodayLast = dailyStats.length > 0 && dailyStats[dailyStats.length - 1].sleepDay === today;
+    const complete = isTodayLast ? dailyStats.slice(0, -1) : dailyStats;
+    const slice = complete.slice(-n);
+    const vals = slice.map(s => s[metric]).filter(v => v != null && !isNaN(v));
     return vals.length ? avg(vals) : null;
   }
 
   function todayElapsedFraction() {
-    const now = new Date();
+    const now = getNow();
     const { start, end } = getDayBoundary(Parser.getSleepDay(now));
     return Math.min(1, Math.max(0, (now - start) / (end - start)));
   }
 
-  function todaySleepDay() { return Parser.getSleepDay(new Date()); }
+  function todaySleepDay() { return Parser.getSleepDay(getNow()); }
 
   /**
    * dailyChartData — for charting daily data cleanly.
@@ -277,13 +364,26 @@ const Engine = (() => {
   }
   function pct(v, total) { return total > 0 ? (v/total*100).toFixed(0)+'%' : '—'; }
 
-  return {
-    analyse, buildDayStats, getDayBoundary, getAllSleepDays,
-    rollingAvg, rollingAvgScalar, dailyChartData,
-    todayElapsedFraction, todaySleepDay,
-    linearRegressionLine, scatterRegression,
-    lastEvent, allFeedIntervals,
-    avg, stdDev, fmtMin, fmtHr, fmtTime, fmtDuration, pct,
+  function getBabyAgeString(dateStr, birthDateStr) {
+    if (!dateStr || !birthDateStr) return null;
+    const d = new Date(dateStr);
+    const b = new Date(birthDateStr);
+    const ms = d.getTime() - b.getTime();
+    if (ms < 0) return null;
+    const days = Math.floor(ms / 86400000);
+    const m = Math.floor(days / 30.44);
+    const w = Math.floor((days % 30.44) / 7);
+    const remD = Math.floor(days % 7);
+    
+    if (m > 0) return `${m} month${m!==1?'s':''}${w>0?`, ${w} wk`:''}`;
+    if (w > 0) return `${w} week${w!==1?'s':''}${remD>0?`, ${remD} d`:''}`;
+    return `${days} day${days!==1?'s':''}`;
+  }
+
+  return { analyse, rollingAvg, rollingAvgScalar, todayElapsedFraction, todaySleepDay,
+           proRataDaily: dailyChartData, dailyChartData, linearRegressionLine, scatterRegression, allFeedIntervals,
+           fmtHr, fmtMin, fmtDuration, fmtTime, avg, stdDev, getBabyAgeString, getNow, sliceData, pct,
+           setBoundaryHour, getDayBoundary,
     WINDOW_DAYS,
   };
 })();

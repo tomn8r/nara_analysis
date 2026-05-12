@@ -47,8 +47,10 @@ const SleepView = (() => {
     renderDailyTotal(dailyStats, windowKey);
     renderLongest(dailyStats, windowKey);
     renderWakeWindows(dailyStats, completeSleeps, windowKey);
-    renderScatter(completeSleeps);
+    renderScatter(completeSleeps, windowKey);
     renderNightPct(dailyStats, windowKey);
+    renderNightWakings(dailyStats, windowKey);
+    renderDayNaps(dailyStats, windowKey);
   }
 
   // ── stat cards ────────────────────────────────────────────
@@ -78,11 +80,17 @@ const SleepView = (() => {
 
   // ── chart 1: daily total sleep ────────────────────────────
   function renderDailyTotal(ds, wk) {
-    const labels = fmtDate(ds);
-    const { completeVals:completeNight, todayActual:actualNight } = Engine.dailyChartData(ds,'nightSleepHr');
-    const { completeVals:completeDay,   todayActual:actualDay   } = Engine.dailyChartData(ds,'daySleepHr');
-    const { completeVals:completeTot,   todayActual:actualTot   } = Engine.dailyChartData(ds,'totalSleepHr');
-    const ra = Engine.rollingAvg(ds,'totalSleepHr',wk);
+    const sl = a => Engine.sliceData(a, wk);
+    const labels = sl(fmtDate(ds));
+    const fullNight = Engine.dailyChartData(ds,'nightSleepHr');
+    const fullDay   = Engine.dailyChartData(ds,'daySleepHr');
+    const fullTot   = Engine.dailyChartData(ds,'totalSleepHr');
+    
+    const completeNight = sl(fullNight.completeVals), actualNight = sl(fullNight.todayActual);
+    const completeDay = sl(fullDay.completeVals),     actualDay = sl(fullDay.todayActual);
+    const completeTot = sl(fullTot.completeVals),     actualTot = sl(fullTot.todayActual);
+    
+    const ra = sl(Engine.rollingAvg(ds,'totalSleepHr',wk));
     const trendVals = Engine.linearRegressionLine(completeTot.map(v=>v??0));
 
     mk('chart-sleep-daily',{
@@ -116,7 +124,8 @@ const SleepView = (() => {
       },
     });
 
-    const completeDays = ds.slice(0,-1).filter(d=>d.totalSleepHr>0);
+    const slicedDs = Engine.sliceData(ds, wk);
+    const completeDays = slicedDs.slice(0,-1).filter(d=>d.totalSleepHr>0);
     if (!completeDays.length) return;
     const avgSleep = Engine.avg(completeDays.map(d=>d.totalSleepHr));
     const trend    = Engine.linearRegressionLine(completeDays.map(d=>d.totalSleepHr));
@@ -133,9 +142,11 @@ const SleepView = (() => {
 
   // ── chart 2: longest block ────────────────────────────────
   function renderLongest(ds, wk) {
-    const labels = fmtDate(ds);
-    const { completeVals, todayActual } = Engine.dailyChartData(ds,'longestBlockHr');
-    const ra = Engine.rollingAvg(ds,'longestBlockHr',wk);
+    const sl = a => Engine.sliceData(a, wk);
+    const labels = sl(fmtDate(ds));
+    const full = Engine.dailyChartData(ds,'longestBlockHr');
+    const completeVals = sl(full.completeVals), todayActual = sl(full.todayActual);
+    const ra = sl(Engine.rollingAvg(ds,'longestBlockHr',wk));
     const trendVals = Engine.linearRegressionLine(completeVals.map(v=>v??0));
 
     mk('chart-sleep-longest',{
@@ -157,7 +168,8 @@ const SleepView = (() => {
       },
     });
 
-    const complete = ds.slice(0,-1).filter(d=>d.longestBlockHr>0);
+    const slicedDs = Engine.sliceData(ds, wk);
+    const complete = slicedDs.slice(0,-1).filter(d=>d.longestBlockHr>0);
     if (complete.length<2) return;
     const firstHalf = complete.slice(0,Math.floor(complete.length/2));
     const lastHalf  = complete.slice(Math.floor(complete.length/2));
@@ -176,7 +188,9 @@ const SleepView = (() => {
 
   // ── chart 3: wake windows ─────────────────────────────────
   function renderWakeWindows(ds, sleeps, wk) {
-    const sorted = [...sleeps].filter(s=>s.endTime).sort((a,b)=>a.startTime-b.startTime);
+    const minTime = Engine.getNow().getTime() - (Engine.WINDOW_DAYS[wk]||99999)*24*3600000;
+    const rSleeps = sleeps.filter(s => s.startTime.getTime() >= minTime);
+    const sorted = [...rSleeps].filter(s=>s.endTime).sort((a,b)=>a.startTime-b.startTime);
     const points = [];
     for (let i=1;i<sorted.length;i++) {
       const gap=(sorted[i].startTime-sorted[i-1].endTime)/60000;
@@ -229,7 +243,9 @@ const SleepView = (() => {
   }
 
   // ── chart 4: sleep session scatter ───────────────────────
-  function renderScatter(sleeps) {
+  function renderScatter(sleeps, wk) {
+    const minTime = Engine.getNow().getTime() - (Engine.WINDOW_DAYS[wk]||99999)*24*3600000;
+    sleeps = sleeps.filter(s => s.startTime.getTime() >= minTime);
     const isNight = s=>{const h=s.startTime.getHours();return h>=19||h<7;};
     const pts = sleeps.map(s=>({x:s.startTime,y:+(s.sleepDuration/3600).toFixed(2),night:isNight(s)}));
     const yVals = pts.map(p=>p.y);
@@ -271,18 +287,21 @@ const SleepView = (() => {
 
   // ── chart 5: night sleep % ────────────────────────────────
   function renderNightPct(ds, wk) {
-    const labels = fmtDate(ds);
-    const pcts   = ds.map(d=>d.totalSleepHr>0?+((d.nightSleepHr/d.totalSleepHr)*100).toFixed(1):0);
-    const ra     = Engine.rollingAvg(ds,'nightSleepHr',wk).map((a,i)=>{
+    const sl = a => Engine.sliceData(a, wk);
+    const labels = sl(fmtDate(ds));
+    const pcts   = sl(ds.map(d=>d.totalSleepHr>0?+((d.nightSleepHr/d.totalSleepHr)*100).toFixed(1):0));
+    const fullRa = Engine.rollingAvg(ds,'nightSleepHr',wk).map((a,i)=>{
       const t=Engine.rollingAvg(ds,'totalSleepHr',wk)[i];
       return a!=null&&t!=null&&t>0?+((a/t)*100).toFixed(1):null;
     });
+    const ra = sl(fullRa);
+    
     mk('chart-sleep-nightpct',{
       type:'line',
       data:{labels,datasets:[
         {label:'Night %',data:pcts,borderColor:C.purple,backgroundColor:'rgba(206,147,216,0.1)',
          fill:true,tension:0.3,pointRadius:3,pointBackgroundColor:C.purple},
-        trendDs(pcts),
+        trendDs(Engine.linearRegressionLine(pcts)),
         avgDs(ra,`${wk} avg`),
       ]},
       options:{...baseOpts('%'),
@@ -297,7 +316,8 @@ const SleepView = (() => {
       },
     });
 
-    const complete = ds.slice(0,-1).filter(d=>d.totalSleepHr>0);
+    const slicedDs = Engine.sliceData(ds, wk);
+    const complete = slicedDs.slice(0,-1).filter(d=>d.totalSleepHr>0);
     if (!complete.length) return;
     const avgPct = Engine.avg(complete.map(d=>d.totalSleepHr>0?(d.nightSleepHr/d.totalSleepHr)*100:0));
     const tr = Engine.linearRegressionLine(complete.map(d=>d.totalSleepHr>0?(d.nightSleepHr/d.totalSleepHr)*100:0));
@@ -309,6 +329,68 @@ const SleepView = (() => {
       `${avgPct>60?'<span class="up">More than half of sleep is at night</span> — Raffy\'s circadian rhythm is developing well.':
         avgPct>40?'Sleep is fairly evenly split between day and night.':
         '<span class="warn">More sleep is occurring during the day than at night.</span>'}`
+    );
+  }
+
+  // ── night wakings ─────────────────────────────────────────
+  function renderNightWakings(ds, wk) {
+    const sl = a => Engine.sliceData(a, wk);
+    const labels = sl(ds.map(d=>d.sleepDay.slice(5)));
+    const actual = sl(Engine.dailyChartData(ds, 'nightWakings').todayActual);
+    const completeTot = sl(Engine.dailyChartData(ds, 'nightWakings').completeVals);
+    const ra = sl(Engine.rollingAvg(ds, 'nightWakings', wk));
+
+    mk('chart-sleep-wakings', {
+      type:'bar',
+      data:{labels, datasets:[
+        {label:'Completed',data:completeTot,backgroundColor:C.red,borderRadius:4},
+        {label:'Today (partial)',data:actual,backgroundColor:'rgba(239,83,80,0.3)',borderRadius:4},
+        trendDs(completeTot.map(v=>v??0)),
+        avgDs(ra)
+      ]},
+      options: baseOpts('Wakings'),
+    });
+
+    const slicedDs = Engine.sliceData(ds, wk);
+    const completeDays = slicedDs.slice(0,-1).filter(d=>d.nightWakings!=null);
+    if (!completeDays.length) return;
+    const avgW = Engine.avg(completeDays.map(d=>d.nightWakings));
+    const trend = Engine.linearRegressionLine(completeDays.map(d=>d.nightWakings));
+    const trendDir = trend.length>=2?trend[trend.length-1]-trend[0]:0;
+    const dirText = trendDir>0.5?`<span class="down">trending worse ↑</span>`:trendDir<-0.5?`<span class="up">improving ↓</span>`:'<strong>stable</strong>';
+    insight('insight-sleep-wakings',
+      `Over <strong>${completeDays.length} complete days</strong>, Raffy averaged <strong>${avgW.toFixed(1)} night wakings</strong> — ${dirText}.`
+    );
+  }
+
+  // ── day naps ──────────────────────────────────────────────
+  function renderDayNaps(ds, wk) {
+    const sl = a => Engine.sliceData(a, wk);
+    const labels = sl(ds.map(d=>d.sleepDay.slice(5)));
+    const actual = sl(Engine.dailyChartData(ds, 'daySleepCount').todayActual);
+    const completeTot = sl(Engine.dailyChartData(ds, 'daySleepCount').completeVals);
+    const ra = sl(Engine.rollingAvg(ds, 'daySleepCount', wk));
+
+    mk('chart-sleep-naps', {
+      type:'bar',
+      data:{labels, datasets:[
+        {label:'Completed',data:completeTot,backgroundColor:C.amber,borderRadius:4},
+        {label:'Today (partial)',data:actual,backgroundColor:'rgba(255,213,79,0.3)',borderRadius:4},
+        trendDs(completeTot.map(v=>v??0)),
+        avgDs(ra)
+      ]},
+      options: baseOpts('Naps'),
+    });
+
+    const slicedDs = Engine.sliceData(ds, wk);
+    const completeDays = slicedDs.slice(0,-1).filter(d=>d.daySleepCount!=null);
+    if (!completeDays.length) return;
+    const avgN = Engine.avg(completeDays.map(d=>d.daySleepCount));
+    const trend = Engine.linearRegressionLine(completeDays.map(d=>d.daySleepCount));
+    const trendDir = trend.length>=2?trend[trend.length-1]-trend[0]:0;
+    const dirText = trendDir>0.3?`<span class="up">trending up ↑</span>`:trendDir<-0.3?`<span class="down">trending down ↓</span>`:'<strong>stable</strong>';
+    insight('insight-sleep-naps',
+      `Over <strong>${completeDays.length} complete days</strong>, Raffy took an average of <strong>${avgN.toFixed(1)} naps</strong> per day — ${dirText}.`
     );
   }
 

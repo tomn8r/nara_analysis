@@ -3,6 +3,11 @@ const Parser = (() => {
 
   // Keep birthDate at module scope so all rows can access it if needed
   let _birthDate = null;
+  let _boundaryHour = 19;
+
+  function setBoundaryHour(hour) {
+    _boundaryHour = hour;
+  }
 
   function parseCSV(csvText) {
     _birthDate = null; // Reset on parse
@@ -44,11 +49,12 @@ const Parser = (() => {
 
     if (type === 'Sleep') {
       const endStr = row['[Sleep] End Date/time'];
-      const endTime = endStr ? parseLocalDT(endStr) : null;
+      if (!endStr) return null; // Ignore ongoing sleep
+      const endTime = parseLocalDT(endStr);
       const dur     = parseSec(row['[Sleep] Duration (Seconds)']);
       event.endTime      = endTime;
       event.sleepDuration = dur;
-      event.isOngoing    = !endTime; // true if sleep has no end yet
+      event.isOngoing    = false;
     }
 
     if (type === 'Breastfeed') {
@@ -60,6 +66,7 @@ const Parser = (() => {
       event.rightDuration = right;
       event.totalDuration = left + right;
       event.feedSubtype   = 'breast';
+      if (event.totalDuration === 0) return null; // Ignore ongoing or empty feeds
     }
 
     if (type === 'Bottle Feed') {
@@ -104,9 +111,8 @@ const Parser = (() => {
   }
 
   function getSleepDay(date) {
-    // 7pm to 7pm day: named after the day it starts.
-    // Subtracting 19 hours aligns everything from 7pm Day X to 6:59pm Day X+1 into Day X.
-    const d = new Date(date.getTime() - 19 * 3600000);
+    // Subtracting boundary hours aligns everything from boundary Day X to boundary Day X+1 into Day X.
+    const d = new Date(date.getTime() - _boundaryHour * 3600000);
     return fmtDate(d);
   }
 
@@ -118,5 +124,5 @@ const Parser = (() => {
   function parseSec(v)  { const n = parseInt(v); return isNaN(n) ? 0 : n; }
   function normSide(v)  { return (v || '').replace('.nonTimer','').trim().toUpperCase(); }
 
-  return { parseCSV, getSleepDay, fmtDate };
+  return { parseCSV, getSleepDay, fmtDate, setBoundaryHour };
 })();
