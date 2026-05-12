@@ -286,18 +286,27 @@ const Engine = (() => {
 
   // ─── LINEAR REGRESSION TREND LINE ────────────────────────────
   function linearRegressionLine(yValues) {
-    const valid = yValues.map((v, i) => ({ i, v: v ?? 0 }));
-    const n = valid.length;
+    const points = yValues
+      .map((v, i) => ({ x: i, y: v }))
+      .filter(p => p.y !== null && !isNaN(p.y));
+    const n = points.length;
     if (n < 2) return yValues.map(() => null);
-    const sumX  = valid.reduce((s, p) => s + p.i, 0);
-    const sumY  = valid.reduce((s, p) => s + p.v, 0);
-    const sumXY = valid.reduce((s, p) => s + p.i * p.v, 0);
-    const sumXX = valid.reduce((s, p) => s + p.i * p.i, 0);
+    
+    const sumX  = points.reduce((s, p) => s + p.x, 0);
+    const sumY  = points.reduce((s, p) => s + p.y, 0);
+    const sumXY = points.reduce((s, p) => s + p.x * p.y, 0);
+    const sumXX = points.reduce((s, p) => s + p.x * p.x, 0);
+    
     const denom = n * sumXX - sumX * sumX;
-    if (!denom) return yValues.map(() => +(sumY / n).toFixed(3));
+    if (!denom) {
+      const avgY = sumY / n;
+      return yValues.map(() => +avgY.toFixed(3));
+    }
+    
     const m = (n * sumXY - sumX * sumY) / denom;
     const b = (sumY - m * sumX) / n;
-    return valid.map(p => +(m * p.i + b).toFixed(3));
+    
+    return yValues.map((_, i) => +(m * i + b).toFixed(3));
   }
 
   // Scatter regression (x,y pairs) — returns {m,b,rSquared}

@@ -81,7 +81,7 @@ const FeedView = (() => {
     
     const ra_c = sl(Engine.rollingAvg(ds,'feedCount',wk));
     const ra_d = sl(Engine.rollingAvg(ds,'totalFeedMin',wk));
-    const trendC = Engine.linearRegressionLine(completeCounts.map(v=>v??0));
+    const trendC = Engine.linearRegressionLine(completeCounts);
 
     mk('chart-feed-daily',{
       type:'bar',

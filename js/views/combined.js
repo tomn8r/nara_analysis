@@ -48,8 +48,8 @@ const CombinedView = (() => {
     
     const ra_sleep = sl(Engine.rollingAvg(ds,'totalSleepHr',wk));
     const ra_feed  = sl(Engine.rollingAvg(ds,'feedCount',wk));
-    const trendSleep = Engine.linearRegressionLine(sleepComplete.map(v=>v??0));
-    const trendFeed  = Engine.linearRegressionLine(feedComplete.map(v=>v??0));
+    const trendSleep = Engine.linearRegressionLine(sleepComplete);
+    const trendFeed  = Engine.linearRegressionLine(feedComplete);
 
     mk('chart-combined-dual',{
       type:'bar',

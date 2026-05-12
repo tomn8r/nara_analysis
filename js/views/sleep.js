@@ -91,7 +91,7 @@ const SleepView = (() => {
     const completeTot = sl(fullTot.completeVals),     actualTot = sl(fullTot.todayActual);
     
     const ra = sl(Engine.rollingAvg(ds,'totalSleepHr',wk));
-    const trendVals = Engine.linearRegressionLine(completeTot.map(v=>v??0));
+    const trendVals = Engine.linearRegressionLine(completeTot);
 
     mk('chart-sleep-daily',{
       type:'bar',
@@ -147,7 +147,6 @@ const SleepView = (() => {
     const full = Engine.dailyChartData(ds,'longestBlockHr');
     const completeVals = sl(full.completeVals), todayActual = sl(full.todayActual);
     const ra = sl(Engine.rollingAvg(ds,'longestBlockHr',wk));
-    const trendVals = Engine.linearRegressionLine(completeVals.map(v=>v??0));
 
     mk('chart-sleep-longest',{
       type:'line',
@@ -158,7 +157,7 @@ const SleepView = (() => {
         {label:'Today (so far)',data:todayActual,type:'line',
          borderColor:C.sleep,borderDash:[4,4],borderWidth:2,
          pointRadius:6,pointStyle:'circle',fill:false},
-        trendDs(trendVals),
+        trendDs(completeVals),
         avgDs(ra,`${wk} avg`),
       ]},
       options:{...baseOpts('Hours'),
@@ -289,7 +288,11 @@ const SleepView = (() => {
   function renderNightPct(ds, wk) {
     const sl = a => Engine.sliceData(a, wk);
     const labels = sl(fmtDate(ds));
-    const pcts   = sl(ds.map(d=>d.totalSleepHr>0?+((d.nightSleepHr/d.totalSleepHr)*100).toFixed(1):0));
+    const today  = Engine.todaySleepDay();
+    const pcts   = sl(ds.map(d=>{
+      if (d.sleepDay === today) return null;
+      return d.totalSleepHr>0?+((d.nightSleepHr/d.totalSleepHr)*100).toFixed(1):0;
+    }));
     const fullRa = Engine.rollingAvg(ds,'nightSleepHr',wk).map((a,i)=>{
       const t=Engine.rollingAvg(ds,'totalSleepHr',wk)[i];
       return a!=null&&t!=null&&t>0?+((a/t)*100).toFixed(1):null;
@@ -301,7 +304,7 @@ const SleepView = (() => {
       data:{labels,datasets:[
         {label:'Night %',data:pcts,borderColor:C.purple,backgroundColor:'rgba(206,147,216,0.1)',
          fill:true,tension:0.3,pointRadius:3,pointBackgroundColor:C.purple},
-        trendDs(Engine.linearRegressionLine(pcts)),
+        trendDs(pcts),
         avgDs(ra,`${wk} avg`),
       ]},
       options:{...baseOpts('%'),
@@ -345,7 +348,7 @@ const SleepView = (() => {
       data:{labels, datasets:[
         {label:'Completed',data:completeTot,backgroundColor:C.red,borderRadius:4},
         {label:'Today (partial)',data:actual,backgroundColor:'rgba(239,83,80,0.3)',borderRadius:4},
-        trendDs(completeTot.map(v=>v??0)),
+        trendDs(completeTot),
         avgDs(ra)
       ]},
       options: baseOpts('Wakings'),
@@ -376,7 +379,7 @@ const SleepView = (() => {
       data:{labels, datasets:[
         {label:'Completed',data:completeTot,backgroundColor:C.amber,borderRadius:4},
         {label:'Today (partial)',data:actual,backgroundColor:'rgba(255,213,79,0.3)',borderRadius:4},
-        trendDs(completeTot.map(v=>v??0)),
+        trendDs(completeTot),
         avgDs(ra)
       ]},
       options: baseOpts('Naps'),
